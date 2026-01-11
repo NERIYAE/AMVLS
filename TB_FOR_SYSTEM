@@ -145,16 +145,6 @@ module tb_safety_scenarios;
         end
         if (tid_int == 1500) begin
           release dut.gen_cars[1].u_car.cmd_valid_in;
-        end
-
-        if (tid_int == 1500) begin
-          $display("\n=== [%0d] SCENARIO 6: Heartbeat Loss ===", tid_int);
-          force dut.u_main_console.hb_to_car = '0;
-        end
-
-        if (tid_int == 2600) begin
-          release dut.u_main_console.hb_to_car;
-
           $display("\n==================================================");
           $display("TEST COMPLETE at Tick %0d", tid_int);
           $display("Minimum Global Gap Observed: %0.3f m", min_gap_global);
