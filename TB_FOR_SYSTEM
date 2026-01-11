@@ -1,0 +1,214 @@
+`timescale 1ns/1ps
+
+module tb_safety_scenarios;
+  import amvls_pkg::*;
+
+  localparam int unsigned N_CARS_TB     = 5;
+  localparam int unsigned CLK_PERIOD_NS = 10;
+
+  logic               clk_100m;
+  logic               rst_n;
+  q24_8_t             car_x      [N_CARS_TB];
+  q16_16_t            car_v      [N_CARS_TB];
+  q8_24_t             car_a_eff  [N_CARS_TB];
+  logic        [7:0]  car_status [N_CARS_TB];
+  tick_id_t           tick_id_out;
+
+  int unsigned        tid_int;
+  int unsigned        tid_prev;
+  real                min_gap_global;
+  bit                 test_fail;
+
+  amvls_top #(
+    .N_CARS(N_CARS_TB)
+  ) dut (
+    .clk_100m    (clk_100m),
+    .rst_n       (rst_n),
+    .car_x       (car_x),
+    .car_v       (car_v),
+    .car_a_eff   (car_a_eff),
+    .car_status  (car_status),
+    .tick_id_out (tick_id_out)
+  );
+
+  initial begin
+    clk_100m = 1'b0;
+    forever #(CLK_PERIOD_NS/2) clk_100m = ~clk_100m;
+  end
+
+  initial begin
+    rst_n          = 1'b0;
+    tid_prev       = '1;
+    min_gap_global = 1.0e30;
+    test_fail      = 1'b0;
+
+    repeat(10) @(posedge clk_100m);
+    rst_n = 1'b1;
+    repeat(100) @(posedge clk_100m);
+
+    $display("[%0t] Initializing positions", $time);
+
+    force dut.gen_cars[0].u_car.u_kinematics_integrator.x_reg = q24_8_t'(32'sd20 <<< X_F);
+    force dut.gen_cars[0].u_car.u_kinematics_integrator.v_reg = q16_16_t'(32'sd0);
+
+    force dut.gen_cars[1].u_car.u_kinematics_integrator.x_reg = q24_8_t'(32'sd15 <<< X_F);
+    force dut.gen_cars[1].u_car.u_kinematics_integrator.v_reg = q16_16_t'(32'sd0);
+
+    force dut.gen_cars[2].u_car.u_kinematics_integrator.x_reg = q24_8_t'(32'sd10 <<< X_F);
+    force dut.gen_cars[2].u_car.u_kinematics_integrator.v_reg = q16_16_t'(32'sd0);
+
+    force dut.gen_cars[3].u_car.u_kinematics_integrator.x_reg = q24_8_t'(32'sd5 <<< X_F);
+    force dut.gen_cars[3].u_car.u_kinematics_integrator.v_reg = q16_16_t'(32'sd0);
+
+    force dut.gen_cars[4].u_car.u_kinematics_integrator.x_reg = q24_8_t'(32'sd0 <<< X_F);
+    force dut.gen_cars[4].u_car.u_kinematics_integrator.v_reg = q16_16_t'(32'sd0);
+
+    repeat(20) @(posedge clk_100m);
+
+    release dut.gen_cars[0].u_car.u_kinematics_integrator.x_reg;
+    release dut.gen_cars[0].u_car.u_kinematics_integrator.v_reg;
+    release dut.gen_cars[1].u_car.u_kinematics_integrator.x_reg;
+    release dut.gen_cars[1].u_car.u_kinematics_integrator.v_reg;
+    release dut.gen_cars[2].u_car.u_kinematics_integrator.x_reg;
+    release dut.gen_cars[2].u_car.u_kinematics_integrator.v_reg;
+    release dut.gen_cars[3].u_car.u_kinematics_integrator.x_reg;
+    release dut.gen_cars[3].u_car.u_kinematics_integrator.v_reg;
+    release dut.gen_cars[4].u_car.u_kinematics_integrator.x_reg;
+    release dut.gen_cars[4].u_car.u_kinematics_integrator.v_reg;
+
+    $display("[%0t] Initialization complete", $time);
+  end
+
+  always @(posedge clk_100m) begin
+    if (!rst_n) begin
+      tid_prev       <= '1;
+      min_gap_global <= 1.0e30;
+      test_fail      <= 1'b0;
+    end else begin
+      tid_int = int'(tick_id_out);
+
+      if (tid_int != tid_prev) begin
+        tid_prev = tid_int;
+
+        print_cars(tid_int);
+        check_safety(tid_int);
+
+        if (tid_int == 0) begin
+          $display("\n=== [%0d] SCENARIO 1: Baseline ===", tid_int);
+        end
+
+        if (tid_int == 300) begin
+          $display("\n=== [%0d] SCENARIO 2: Single Car Brake (Car 2) ===", tid_int);
+          force dut.gen_cars[2].u_car.a_cmd_in = A_CMD_MAX_BRAKE;
+        end
+        if (tid_int == 600) begin
+          release dut.gen_cars[2].u_car.a_cmd_in;
+        end
+
+        if (tid_int == 600) begin
+          $display("\n=== [%0d] SCENARIO 3: Braking Wave ===", tid_int);
+          force dut.gen_cars[0].u_car.a_cmd_in = A_CMD_MAX_BRAKE;
+        end
+        if (tid_int == 660) begin
+          release dut.gen_cars[0].u_car.a_cmd_in;
+          force dut.gen_cars[1].u_car.a_cmd_in = A_CMD_MAX_BRAKE;
+        end
+        if (tid_int == 720) begin
+          release dut.gen_cars[1].u_car.a_cmd_in;
+          force dut.gen_cars[2].u_car.a_cmd_in = A_CMD_MAX_BRAKE;
+        end
+        if (tid_int == 780) begin
+          release dut.gen_cars[2].u_car.a_cmd_in;
+          force dut.gen_cars[3].u_car.a_cmd_in = A_CMD_MAX_BRAKE;
+        end
+        if (tid_int == 840) begin
+          release dut.gen_cars[3].u_car.a_cmd_in;
+          force dut.gen_cars[4].u_car.a_cmd_in = A_CMD_MAX_BRAKE;
+        end
+        if (tid_int == 900) begin
+          release dut.gen_cars[4].u_car.a_cmd_in;
+        end
+
+        if (tid_int == 900) begin
+          $display("\n=== [%0d] SCENARIO 4: Local Neighbor Stress (Car 1) ===", tid_int);
+          force dut.gen_cars[1].u_car.need_brake_from_neighbor = 1'b1;
+          force dut.gen_cars[1].u_car.a_cmd_in = A_CMD_MAX_ACCEL;
+        end
+        if (tid_int == 1200) begin
+          release dut.gen_cars[1].u_car.need_brake_from_neighbor;
+          release dut.gen_cars[1].u_car.a_cmd_in;
+        end
+
+        if (tid_int == 1200) begin
+          $display("\n=== [%0d] SCENARIO 5: Missing Command (Car 1) ===", tid_int);
+          force dut.gen_cars[1].u_car.cmd_valid_in = 1'b0;
+        end
+        if (tid_int == 1500) begin
+          release dut.gen_cars[1].u_car.cmd_valid_in;
+        end
+
+        if (tid_int == 1500) begin
+          $display("\n=== [%0d] SCENARIO 6: Heartbeat Loss ===", tid_int);
+          force dut.u_main_console.hb_to_car = '0;
+        end
+
+        if (tid_int == 2600) begin
+          release dut.u_main_console.hb_to_car;
+
+          $display("\n==================================================");
+          $display("TEST COMPLETE at Tick %0d", tid_int);
+          $display("Minimum Global Gap Observed: %0.3f m", min_gap_global);
+          if (test_fail)
+            $display("RESULT: FAIL");
+          else
+            $display("RESULT: PASS");
+          $display("==================================================");
+          $finish;
+        end
+      end
+    end
+  end
+
+  task automatic print_cars(input int tid);
+    real x_m;
+    real v_mps;
+    real a_mps2;
+    for (int i = 0; i < N_CARS_TB; i++) begin
+      $display("[%0t] tick=%0d car%0d: x=%0d v=%0d a_eff=%0d status=0x%0h",
+               $time, tid, i, car_x[i], car_v[i], car_a_eff[i], car_status[i]);
+      x_m    = $itor(car_x[i])     / (1.0 * (1 << X_F));
+      v_mps  = $itor(car_v[i])     / (1.0 * (1 << V_F));
+      a_mps2 = $itor(car_a_eff[i]) / (1.0 * (1 << A_F));
+      $display("[%0t] tick=%0d car%0d: x=%0f m  v=%0f m/s  a=%0f m/s^2",
+               $time, tid, i, x_m, v_mps, a_mps2);
+    end
+  endtask
+
+  task automatic check_safety(input int tid);
+    int  signed gap_q24_8;
+    real        gap_m;
+    real        acc_curr;
+    for (int i = 1; i < N_CARS_TB; i++) begin
+      gap_q24_8 = $signed(car_x[i-1]) - $signed(car_x[i]);
+      gap_m     = gap_q24_8 / real'(1 << X_F);
+      if (gap_m < min_gap_global) min_gap_global = gap_m;
+
+      $display("[%0t] tick=%0d GAP(%0d->%0d): x_front-x_follow = %0d (Q24.8) = %0f m",
+               $time, tid, i-1, i, gap_q24_8, gap_m);
+
+      if (gap_q24_8 < 0) begin
+        $error("FAIL [Tick %0d]: Car %0d overtook Car %0d! Gap = %0f m",
+               tid, i, i-1, gap_m);
+        test_fail = 1;
+      end
+
+      acc_curr = $itor(car_a_eff[i]) / (1.0 * (1 << A_F));
+      if ((gap_q24_8 < (32'sd4 <<< X_F)) && (acc_curr > 0.01)) begin
+        $error("FAIL [Tick %0d]: Car %0d accelerating (%0f) despite unsafe gap (%0f)!",
+               tid, i, acc_curr, gap_m);
+        test_fail = 1;
+      end
+    end
+  endtask
+
+endmodule
